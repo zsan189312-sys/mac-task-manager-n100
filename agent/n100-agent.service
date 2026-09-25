@@ -1,0 +1,17 @@
+[Unit]
+Description=TaskManager-N100 monitor agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/n100-agent
+ExecStart=/usr/bin/python3 -u /opt/n100-agent/n100_agent.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+Environment=N100_BIND=100.111.73.34
+Environment=N100_PORT=9100
+
+[Install]
+WantedBy=multi-user.target

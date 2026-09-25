@@ -1,0 +1,13 @@
+{
+  "name": "mac-task-manager-n100",
+  "productName": "任务管理器-N100",
+  "version": "1.0.0",
+  "description": "远程监控 N100（Ubuntu）的 Mac 任务管理器：CPU/内存/磁盘/网络/RAPL 功耗与温度/进程/Docker",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^37.10.3"
+  }
+}

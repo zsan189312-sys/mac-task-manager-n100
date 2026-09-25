@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>任务管理器-N100</title>
+<style>
+  /* ---------- Design Tokens (macOS native) ---------- */
+  :root {
+    --bg: rgba(20, 22, 27, 0.92);
+    --bg-solid: #14161b;
+    --surface: rgba(255, 255, 255, 0.048);
+    --surface-hover: rgba(255, 255, 255, 0.08);
+    --surface-active: rgba(255, 255, 255, 0.12);
+    --hairline: rgba(255, 255, 255, 0.07);
+    --hairline-strong: rgba(255, 255, 255, 0.12);
+    --text: #f2f4f8;
+    --text-2: rgba(235, 240, 248, 0.62);
+    --text-3: rgba(235, 240, 248, 0.34);
+    --accent: #0a84ff;
+    --p-core: #0a84ff;
+    --e-core: #30d158;
+    --purple: #bf5af2;
+    --amber: #ffd60a;
+    --green: #30d158;
+    --orange: #ff9f0a;
+    --red: #ff453a;
+    --cyan: #64d2ff;
+    --r-lg: 12px; --r-md: 10px; --r-sm: 7px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; cursor: default; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+    background: transparent; color: var(--text); font-size: 13px;
+    display: flex; flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- 顶栏 ---------- */
+  #titlebar {
+    height: 52px; flex: none; display: flex; align-items: center;
+    padding: 0 16px 0 84px; gap: 12px;
+    -webkit-app-region: drag;
+    border-bottom: 1px solid var(--hairline);
+    background: rgba(255,255,255,0.02);
+  }
+  #seg {
+    -webkit-app-region: no-drag;
+    display: flex; background: var(--surface); border-radius: 9px; padding: 2px; gap: 2px;
+  }
+  .tab {
+    padding: 5px 22px; border-radius: 7px; color: var(--text-2);
+    font-size: 13px; text-align: center;
+    transition: background .15s ease, color .15s ease;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { background: var(--surface-active); color: var(--text); font-weight: 600; }
+  .tab .kbd { opacity: 0; margin-left: 6px; font-size: 10px; color: var(--text-3); }
+  body.cmd-down .tab .kbd { opacity: 1; }
+
+  #poll-ctl {
+    -webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px;
+    background: var(--surface); border-radius: 8px; padding: 3px 8px; color: var(--text-3); font-size: 11px;
+  }
+  #poll-ctl button {
+    border: 0; background: transparent; color: var(--text-2); font-size: 11px;
+    padding: 3px 8px; border-radius: 6px; cursor: pointer; font-family: inherit;
+  }
+  #poll-ctl button.on { background: var(--surface-active); color: var(--text); }
+  #poll-ctl button:hover { color: var(--text); }
+
+  #osinfo { margin-left: auto; color: var(--text-3); font-size: 12px; letter-spacing: .1px; text-align: right; }
+
+  .view { flex: 1; display: none; min-height: 0; }
+  .view.active { display: flex; }
+
+  /* ---------- 性能页 ---------- */
+  #sidebar {
+    width: 244px; flex: none; overflow-y: auto; padding: 12px;
+    border-right: 1px solid var(--hairline);
+    display: flex; flex-direction: column; gap: 8px;
+    background: rgba(255,255,255,0.015);
+  }
+  #sidebar::-webkit-scrollbar { width: 0; }
+  .card {
+    background: var(--surface); border: 1px solid transparent; border-radius: var(--r-md);
+    padding: 11px 13px; display: flex; align-items: center; gap: 10px;
+    transition: background .15s ease;
+  }
+  .card:hover { background: var(--surface-hover); }
+  .card.active { background: var(--surface-active); border-color: var(--hairline-strong); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .card-body { flex: 1; min-width: 0; }
+  .card-title { font-size: 13px; font-weight: 500; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card-sub { font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .card canvas { width: 58px; height: 32px; flex: none; }
+
+  #detail { flex: 1; padding: 20px 26px 24px; overflow-y: auto; display: flex; flex-direction: column; }
+  #detail::-webkit-scrollbar { width: 8px; }
+  #detail::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+  .detail-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+  .detail-title { font-size: 26px; font-weight: 700; letter-spacing: .2px; }
+  .detail-meta { color: var(--text-2); font-size: 12px; }
+  .chart-wrap { position: relative; margin: 12px 0 6px; }
+  #bigchart { width: 100%; height: 220px; display: block; }
+  .axis-row { display: flex; justify-content: space-between; color: var(--text-3); font-size: 11px; margin-bottom: 20px; }
+  #chart-max { color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: var(--r-md); padding: 14px 16px 12px;
+  }
+  .panel-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+  .panel-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+  .panel-value { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .panel canvas { width: 100%; height: 84px; display: block; }
+
+  /* 每核小图块：N100 为 4 核，4 列铺满 */
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r-sm);
+    padding: 8px 10px 6px;
+  }
+  .tile-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3px; }
+  .tile-name { font-size: 10.5px; color: var(--text-2); }
+  .tile-name b { font-weight: 600; color: var(--text); }
+  .tile-val { font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile canvas { width: 100%; height: 30px; display: block; }
+
+  .info-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 8px; margin-top: 12px;
+  }
+  .info-item { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r-sm); padding: 11px 13px; }
+  .info-label { color: var(--text-2); font-size: 11px; margin-bottom: 4px; }
+  .info-value { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .info-value small { font-size: 11px; color: var(--text-3); font-weight: 400; }
+
+  .bar-row { display: flex; align-items: center; gap: 10px; margin: 5px 0; }
+  .bar-label { width: 118px; color: var(--text-2); font-size: 11.5px; flex: none; }
+  .bar-track { flex: 1; height: 5px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; transition: width .6s ease; }
+  .bar-num { width: 68px; text-align: right; color: var(--text-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+  .section-title { color: var(--text-2); font-size: 12px; font-weight: 600; margin: 18px 0 8px; letter-spacing: .2px; }
+
+  .vol-table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  .vol-table th { text-align: left; color: var(--text-3); font-weight: 500; font-size: 11px; padding: 7px 10px; border-bottom: 1px solid var(--hairline); }
+  .vol-table td { padding: 10px; border-bottom: 1px solid var(--hairline); font-size: 12.5px; }
+  .vol-table td:last-child { text-align: right; color: var(--text-2); }
+  .usage-track { width: 120px; height: 5px; background: rgba(255,255,255,0.08); border-radius: 3px; display: inline-block; vertical-align: middle; margin-left: 10px; overflow: hidden; }
+  .usage-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+
+  /* ---------- 进程页 ---------- */
+  #procs-view, #docker-view { flex-direction: column; }
+  #proc-toolbar { flex: none; display: flex; gap: 12px; align-items: center; padding: 14px 20px 10px; }
+  #proc-search {
+    background: var(--surface); border: 1px solid var(--hairline); color: var(--text);
+    border-radius: var(--r-sm); padding: 6px 12px; width: 260px; outline: none; font-size: 13px;
+    cursor: text; user-select: text; transition: border-color .15s ease, background .15s ease;
+  }
+  #proc-search::placeholder { color: var(--text-3); }
+  #proc-search:focus { border-color: var(--accent); background: rgba(10,132,255,0.06); }
+  #proc-summary { color: var(--text-2); font-size: 12px; margin-left: auto; }
+  #proc-table-wrap, #docker-table-wrap { flex: 1; overflow-y: auto; padding: 0 20px 14px; }
+  #proc-table-wrap::-webkit-scrollbar, #docker-table-wrap::-webkit-scrollbar { width: 8px; }
+  #proc-table-wrap::-webkit-scrollbar-thumb, #docker-table-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+  #proc-table, #docker-table { width: 100%; border-collapse: collapse; }
+  #proc-table th, #docker-table th {
+    text-align: left; color: var(--text-3); font-weight: 500; font-size: 11px;
+    padding: 8px 10px; border-bottom: 1px solid var(--hairline);
+    position: sticky; top: 0; background: var(--bg-solid); z-index: 1;
+  }
+  #proc-table th.th-num, #docker-table th.th-num { text-align: right; }
+  #proc-table th.sortable:hover { color: var(--text); }
+  #proc-table th.sort-active { color: var(--accent); font-weight: 600; }
+  #proc-table td, #docker-table td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 12.5px; }
+  #proc-table tr:hover td, #docker-table tr:hover td { background: var(--surface); }
+  .td-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
+  .kill-btn {
+    opacity: 0; border: 1px solid rgba(255,69,58,0.35); background: rgba(255,69,58,0.1); color: var(--red);
+    border-radius: 6px; padding: 2px 10px; font-size: 11px; cursor: pointer; transition: opacity .12s ease;
+  }
+  .kill-btn:hover { background: rgba(255,69,58,0.2); }
+  #proc-table tr:hover .kill-btn { opacity: 1; }
+  .cpu-hot { color: var(--amber); font-weight: 600; }
+  .io-detail { color: var(--text-3); font-size: 11px; }
+  .empty-hint { color: var(--text-3); font-size: 12px; padding: 24px 10px; }
+
+  /* ---------- 底栏 ---------- */
+  #statusbar {
+    height: 28px; flex: none; display: flex; align-items: center;
+    padding: 0 16px; border-top: 1px solid var(--hairline);
+    color: var(--text-3); font-size: 11px; gap: 8px;
+    background: rgba(255,255,255,0.02);
+  }
+  #statusbar .right { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .sb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); display: inline-block; margin-right: 6px; }
+  .sb-dot.bad { background: var(--red); }
+</style>
+</head>
+<body>
+  <div id="titlebar">
+    <div id="seg">
+      <div class="tab active" data-view="perf">性能<span class="kbd">⌘1</span></div>
+      <div class="tab" data-view="procs">进程<span class="kbd">⌘2</span></div>
+      <div class="tab" data-view="docker">容器<span class="kbd">⌘3</span></div>
+    </div>
+    <div id="poll-ctl">
+      <span>轮询</span>
+      <button data-ms="2000">2s</button>
+      <button data-ms="5000" class="on">5s</button>
+      <button data-ms="10000">10s</button>
+    </div>
+    <div id="osinfo"></div>
+  </div>
+
+  <div id="perf-view" class="view active">
+    <div id="sidebar"></div>
+    <div id="detail">
+      <div class="detail-head">
+        <div class="detail-title" id="detail-title">CPU</div>
+        <div class="detail-meta" id="detail-meta"></div>
+      </div>
+      <div class="chart-wrap"><canvas id="bigchart"></canvas></div>
+      <div class="axis-row"><span>60 秒前</span><span id="chart-max"></span><span>现在</span></div>
+      <div id="detail-body"></div>
+    </div>
+  </div>
+
+  <div id="procs-view" class="view">
+    <div id="proc-toolbar">
+      <input id="proc-search" placeholder="搜索进程名称…" spellcheck="false">
+      <div id="proc-summary"></div>
+    </div>
+    <div id="proc-table-wrap">
+      <table id="proc-table">
+        <thead><tr>
+          <th class="th-num" style="width:76px" data-sort="pid">PID</th>
+          <th>进程名称</th>
+          <th class="th-num sortable" style="width:84px" data-sort="cpu" id="th-cpu">CPU %</th>
+          <th class="th-num sortable" style="width:92px" data-sort="mem">内存</th>
+          <th class="th-num sortable" style="width:150px" data-sort="disk">磁盘（读/写）</th>
+          <th class="th-num sortable" style="width:150px" data-sort="net">网速（↓/↑）</th>
+          <th class="th-num sortable" style="width:96px" data-sort="energy" title="整机封装功耗 × CPU 份额">能耗(估)</th>
+          <th style="width:78px"></th>
+        </tr></thead>
+        <tbody id="proc-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="docker-view" class="view">
+    <div id="proc-toolbar">
+      <div id="proc-summary" style="margin-left:0">Docker 容器（10 秒采样一次，仅在打开本页时采集）</div>
+    </div>
+    <div id="docker-table-wrap">
+      <table id="docker-table">
+        <thead><tr>
+          <th>容器</th>
+          <th class="th-num" style="width:90px">CPU</th>
+          <th class="th-num" style="width:130px">内存占用</th>
+          <th class="th-num" style="width:150px">网络（收/发）</th>
+          <th class="th-num" style="width:150px">块设备（读/写）</th>
+          <th class="th-num" style="width:70px">PIDs</th>
+        </tr></thead>
+        <tbody id="docker-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="statusbar">
+    <span><span class="sb-dot" id="sb-dot"></span><span id="sb-left">正在连接 N100…</span></span>
+    <span class="right" id="sb-right"></span>
+  </div>
+
+<script src="renderer.js"></script>
+</body>
+</html>
