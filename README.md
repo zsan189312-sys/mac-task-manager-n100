@@ -42,6 +42,7 @@ Mac（Electron）──HTTP/gzip──▶ N100 agent（Python 标准库，system
 - **内存**：物理内存构成（匿名/缓存/共享/缓冲）、Swap
 - **磁盘**：块设备读写速率（自动排除分区重复计数与 loop 设备）、挂载点容量
 - **网络**：物理网卡 / Wi-Fi / Tailscale（自动排除 veth/br-* 虚拟接口）
+- **GPU**：Intel 核显利用率（`rc6_residency_ms` 空闲驻留差分 → 真实利用率，免 sudo）+ 实时频率（`rps_cur_freq`，RP0/RPn 范围）+ 型号/驱动（lspci 解析）
 - **功耗 / 温度**：Intel **RAPL 真实功耗**（封装 + 核心，瓦）+ CPU/主板/无线温度
 - **进程**：全量进程、整机占比 CPU、内存、**进程级磁盘读写**（/proc/pid/io）、**每进程 TCP 网速**（ss 解析）、能耗（整机功耗 × CPU 份额）、搜索/排序/远程结束进程
 - **容器**：Docker 容器 CPU/内存/网络/块设备/PIDs（10 秒采样，仅打开该页时采集）
