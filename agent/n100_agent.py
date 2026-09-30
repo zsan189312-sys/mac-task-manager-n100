@@ -9,7 +9,7 @@ n100_agent.py — 任务管理器-N100 的数据采集端（常驻 agent）
   3. 数据最全：/proc + /sys 直读，root 运行可拿到 RAPL 真实功耗与全部进程磁盘 IO
 
 接口：
-  GET /api/snapshot          系统快照（CPU/内存/磁盘/网络/温度/功耗/系统信息）
+  GET /api/snapshot          系统快照（CPU/内存/磁盘/网络/GPU/温度/功耗/系统信息）
   GET /api/procs?top=60      进程表（按需采样，返回 Top N）
   GET /api/docker            Docker 容器列表与占用（按需采样）
   GET /api/health            健康检查
@@ -69,6 +69,69 @@ def sh(cmd, timeout=6):
         return ""
 
 
+# ---------------------------------------------------------------- Intel 核显（i915 / xe）
+
+_GPU_CACHE = {"path": None, "path_t": 0.0, "info": None, "info_t": 0.0}
+
+
+def gpu_gt_path():
+    """定位核显 sysfs 节点 /sys/class/drm/card*/gt/gt0（i915 与 xe 驱动通用），60 秒缓存"""
+    now = time.time()
+    if _GPU_CACHE["path"] is not None and now - _GPU_CACHE["path_t"] < 60:
+        return _GPU_CACHE["path"]
+    path = None
+    base = "/sys/class/drm"
+    if os.path.isdir(base):
+        for d in sorted(os.listdir(base)):
+            if not re.match(r"^card\d+$", d):
+                continue
+            p = os.path.join(base, d, "gt", "gt0")
+            if os.path.isdir(p):
+                path = p
+                break
+    _GPU_CACHE["path"] = path
+    _GPU_CACHE["path_t"] = now
+    return path
+
+
+def gpu_info():
+    """核显静态信息（型号 / 驱动 / PCI ID），10 分钟缓存；无核显时返回 None"""
+    now = time.time()
+    if _GPU_CACHE["info"] is not None and now - _GPU_CACHE["info_t"] < 600:
+        return _GPU_CACHE["info"]
+    name = driver = pci = slot = ""
+    base = "/sys/class/drm"
+    card = None
+    if os.path.isdir(base):
+        for d in sorted(os.listdir(base)):
+            if re.match(r"^card\d+$", d):
+                card = d
+                break
+    if card:
+        dev = os.path.join(base, card, "device")
+        try:
+            slot = os.path.basename(os.path.realpath(dev))
+        except Exception:
+            slot = ""
+        for line in read_file(os.path.join(dev, "uevent")).splitlines():
+            if line.startswith("DRIVER="):
+                driver = line.split("=", 1)[1].strip()
+            elif line.startswith("PCI_ID="):
+                pci = line.split("=", 1)[1].strip()
+    # 型号名：优先 lspci（取其 "设备类编号]: " 之后的部分，并去掉结尾的 [厂商:设备] 编号）
+    if slot:
+        out = sh("lspci -nn -s %s 2>/dev/null" % slot, timeout=4)
+        m = re.search(r"\[[0-9a-fA-F]{4}\]:\s*(.+)$", out.strip())
+        if m:
+            name = re.sub(r"\s*\[[0-9a-fA-F]{4}:[0-9a-fA-F]{4}\]\s*$", "", m.group(1)).strip()
+    if not name:
+        name = ("Intel 核显" if pci.startswith("8086") else "核显") + ((" (" + pci + ")") if pci else "")
+    v = {"name": name, "driver": driver, "pci": pci, "shared": True} if (driver or pci or name) else None
+    _GPU_CACHE["info"] = v
+    _GPU_CACHE["info_t"] = now
+    return v
+
+
 # ---------------------------------------------------------------- 系统指标采样器
 
 class Sampler(threading.Thread):
@@ -82,10 +145,11 @@ class Sampler(threading.Thread):
         self.prev_net = self._read_netdev()
         self.prev_rapl = self._read_rapl()
         self.prev_t = time.time()
+        self.prev_gpu_rc6 = None
         self.state = {
             "cores": [], "cpu_total": 0.0, "cpu_user": 0.0, "cpu_sys": 0.0,
             "cpu_iowait": 0.0, "disk": [], "disk_total_r": 0.0, "disk_total_w": 0.0,
-            "net": [], "power_pkg": 0.0, "power_cores": 0.0, "power_ok": False,
+            "net": [], "gpu": None, "power_pkg": 0.0, "power_cores": 0.0, "power_ok": False,
             "temp": {}, "sample_age": 0.0,
         }
         self._stop = False
@@ -278,6 +342,8 @@ class Sampler(threading.Thread):
                     cores_w = watts
         self.prev_rapl = rapl
 
+        gpu = self._read_gpu(dt)
+
         with self.lock:
             self.state.update({
                 "cores": cores,
@@ -289,12 +355,41 @@ class Sampler(threading.Thread):
                 "disk_total_r": round(tr, 1),
                 "disk_total_w": round(tw, 1),
                 "net": ifaces,
+                "gpu": gpu,
                 "power_pkg": round(pkg, 2),
                 "power_cores": round(cores_w, 2),
                 "power_ok": power_ok,
                 "temp": self._read_temp(),
                 "sample_age": 0.0,
             })
+
+    def _read_gpu(self, dt):
+        """核显实时状态：rc6_residency_ms（空闲驻留 ms）差分 → 真实利用率；rps_cur_freq 为当前频率
+
+        无核显 / 无 gt 节点 / 无权限时返回 None，前端自动隐藏 GPU 卡片。
+        """
+        gt = gpu_gt_path()
+        if not gt:
+            return None
+        rc6 = read_int(os.path.join(gt, "rc6_residency_ms"), -1)
+        cur_f = read_int(os.path.join(gt, "rps_cur_freq_mhz"), 0) or read_int(os.path.join(gt, "rps_act_freq_mhz"), 0)
+        fmax = read_int(os.path.join(gt, "rps_RP0_freq_mhz"), 0) or read_int(os.path.join(gt, "rps_max_freq_mhz"), 0)
+        fmin = read_int(os.path.join(gt, "rps_RPn_freq_mhz"), 0) or read_int(os.path.join(gt, "rps_min_freq_mhz"), 0)
+        busy = None
+        if rc6 >= 0:
+            if self.prev_gpu_rc6 is not None:
+                d = rc6 - self.prev_gpu_rc6
+                if d >= 0:
+                    # rc6 计的是"空闲"时间：利用率 = 1 - 空闲占比
+                    busy = max(0.0, min(100.0, 100.0 * (1.0 - (d / 1000.0) / dt)))
+            self.prev_gpu_rc6 = rc6
+        info = gpu_info() or {}
+        return {
+            "busy": round(busy, 1) if busy is not None else None,
+            "freq": cur_f, "freqMax": fmax, "freqMin": fmin,
+            "name": info.get("name", ""), "driver": info.get("driver", ""),
+            "shared": True,
+        }
 
     def snapshot(self):
         with self.lock:
@@ -303,6 +398,7 @@ class Sampler(threading.Thread):
         st["disk"] = [dict(d) for d in st["disk"]]
         st["net"] = [dict(n) for n in st["net"]]
         st["temp"] = dict(st["temp"])
+        st["gpu"] = dict(st["gpu"]) if st.get("gpu") else None
         return st
 
     def stop(self):
@@ -555,6 +651,7 @@ def static_info():
         "kernel": read_file("/proc/sys/kernel/osrelease", "").strip(),
         "os": os_name,
         "uptime": round(uptime_s),
+        "gpu": gpu_info(),
         "disks": disks[:8],
     }
     _static_cache["v"] = v
