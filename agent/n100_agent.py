@@ -278,7 +278,10 @@ class Sampler(threading.Thread):
     def _tick(self, dt):
         cpu = self._read_cpu()
         cores = []
-        tot_u = tot_s = tot_i = tot_w = 0
+        # /proc/stat 字段: user nice system idle iowait irq softirq steal
+        # 口径对齐 top/htop：busy 含 irq/softirq（中断处理也是真实负载），
+        # 旧公式两处都漏了 irq/softirq 且每核与总量口径不一致（实测差 27 个百分点）
+        acc = {"u": 0.0, "s": 0.0, "i": 0.0, "w": 0.0, "q": 0.0, "t": 0.0}
         for cid in sorted(cpu.keys()):
             cur, prev = cpu[cid], self.prev_cpu.get(cid)
             if not prev:
@@ -289,17 +292,20 @@ class Sampler(threading.Thread):
             ds = cur[2] - prev[2]
             di = cur[3] - prev[3]
             dw = cur[4] - prev[4]
-            total = du + dn + ds + di + dw
-            busy = du + dn + ds
+            dq = (cur[5] - prev[5]) + (cur[6] - prev[6])   # irq + softirq
+            dst = cur[7] - prev[7]                          # steal（被宿主偷走，不计本机 busy）
+            total = du + dn + ds + di + dw + dq + dst
+            busy = du + dn + ds + dq
             cores.append(round(busy * 100.0 / total, 1) if total > 0 else 0.0)
-            tot_u += du
-            tot_s += ds
-            tot_i += di
-            tot_w += dw
+            acc["u"] += du + dn          # nice 并入用户（与 macOS 端口径一致）
+            acc["s"] += ds + dq          # irq/softirq 并入系统
+            acc["i"] += di
+            acc["w"] += dw
+            acc["t"] += total
         self.prev_cpu = cpu
 
-        total_all = tot_u + tot_s + tot_i + tot_w
-        cpu_total = (tot_u + tot_s) * 100.0 / total_all if total_all > 0 else 0.0
+        ta = acc["t"]
+        cpu_total = (acc["u"] + acc["s"]) * 100.0 / ta if ta > 0 else 0.0
 
         disk = self._read_diskstats()
         disks = []
@@ -348,9 +354,9 @@ class Sampler(threading.Thread):
             self.state.update({
                 "cores": cores,
                 "cpu_total": round(cpu_total, 1),
-                "cpu_user": round(tot_u * 100.0 / total_all, 1) if total_all else 0.0,
-                "cpu_sys": round(tot_s * 100.0 / total_all, 1) if total_all else 0.0,
-                "cpu_iowait": round(tot_w * 100.0 / total_all, 1) if total_all else 0.0,
+                "cpu_user": round(acc["u"] * 100.0 / ta, 1) if ta else 0.0,
+                "cpu_sys": round(acc["s"] * 100.0 / ta, 1) if ta else 0.0,
+                "cpu_iowait": round(acc["w"] * 100.0 / ta, 1) if ta else 0.0,
                 "disk": disks,
                 "disk_total_r": round(tr, 1),
                 "disk_total_w": round(tw, 1),
